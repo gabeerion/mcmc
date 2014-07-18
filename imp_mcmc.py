@@ -187,12 +187,13 @@ def wsnr(d, n):
 #-------------------------
 # Main function to do the imputation and output the finished alignment
 def imp_align(imputations, al, demweights):
-	pd = pdn(al)
-	sorted_dists = np.array([np.sort(i) for i in pd])		#Returns a sorted pairwise distance matrix
-	minlist, avglist, maxlist = orderstats(pd, al, 1), orderstats(pd, al, len(al)/2), orderstats(pd, al, -1)		# Using 1 as index for min to skip the leading 0 in each row
-	mindict, avgdict, maxdict = demfilt(minlist), demfilt(avglist), demfilt(maxlist)
+	#pd = pdn(al)
+	#sorted_dists = np.array([np.sort(i) for i in pd])		#Returns a sorted pairwise distance matrix
+	#minlist, avglist, maxlist = orderstats(pd, al, 1), orderstats(pd, al, len(al)/2), orderstats(pd, al, -1)		# Using 1 as index for min to skip the leading 0 in each row
+	#mindict, avgdict, maxdict = demfilt(minlist), demfilt(avglist), demfilt(maxlist)
 	pssm = AlignInfo.SummaryInfo(al).pos_specific_score_matrix()
 	mutweights = pssmweight(pssm)
+	return mutweights,pssm
 	imputed = multimpute(al, mindict, avgdict, mutweights, pssm, imputations, demweights)
 	return imputed
 

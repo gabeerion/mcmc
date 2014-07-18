@@ -1,0 +1,18 @@
+*~
+*.pyc
+*.so
+*.csv
+*.html
+*.fasta
+*.genbank
+*.out
+*.pdf
+.DS_Store
+Journal*
+outfile
+Ratios
+TiTv Ratio
+build
+dnadist.app
+fastapubs
+prelim_figs

@@ -1,6 +1,11 @@
 import numpy as np
+import random
+from Bio.Align import MultipleSeqAlignment
+from Bio import SeqRecord, Seq
+
 
 NUCMAP = {'-':0, 'A':1, 'a':1, 'G':2, 'g':2, 'C':3, 'c':3, 'T':4, 't':4}
+BACKMAP = {0:'-', 1:'A', 2:'G', 3:'C', 4:'T'}
 
 #Save an alignment to a fasta file
 def qfas(l,fname):
@@ -99,8 +104,16 @@ def ttf(al):
 			tv += sum(transversions)
 	return float(ti)/tv"""
 
+def delete(al, num):
+	l = len(al)-num
+	return MultipleSeqAlignment(random.sample(al,l))
+
 def arint(arr):
 	def f(char): return NUCMAP[char]
+	return np.array([map(f,r) for r in arr])
+
+def intar(arr):
+	def f(ch): return BACKMAP[ch]
 	return np.array([map(f,r) for r in arr])
 
 

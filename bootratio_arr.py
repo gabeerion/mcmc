@@ -8,8 +8,8 @@ import random
 from tt import ttratio as tt
 from scratch import arint
 
-INFILE = 'hiv-pol.fasta'
-OUTFILE = 'brfast.csv'
+INFILE = 'hiv-env.fasta'
+OUTFILE = 'br_env.csv'
 NUMPROCS = 7
 REPS = 10003
 

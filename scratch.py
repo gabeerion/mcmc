@@ -2,9 +2,10 @@ import numpy as np
 import random
 from Bio.Align import MultipleSeqAlignment
 from Bio import SeqRecord, Seq
+from collections import defaultdict
 
 
-NUCMAP = {'-':0, 'A':1, 'a':1, 'G':2, 'g':2, 'C':3, 'c':3, 'T':4, 't':4}
+NUCMAP = defaultdict(int, {'-':0, 'A':1, 'a':1, 'G':2, 'g':2, 'C':3, 'c':3, 'T':4, 't':4})
 BACKMAP = {0:'-', 1:'A', 2:'G', 3:'C', 4:'T'}
 
 #Save an alignment to a fasta file

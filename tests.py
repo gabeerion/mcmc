@@ -1,23 +1,48 @@
 #! /usr/bin/python
 
-import tt, sys, impute, random, math
+import tt, sys, impute, random, math, multiprocessing
 import numpy as np
 import scratch as s
 import imp_mcmc as im
 import mifunc as mf
 from Bio import AlignIO
-from scipy.stats import norm
+from scipy.stats import norm, ks_2samp as ks
+from mcmc import distmins, clik1, clik2
+from matplotlib import pyplot as plt
 
 DELS = .4
 IMPUTATIONS = 10
-THRESHOLD = .1
+THRESHOLD = .01
 ALPHA=.05
+CORREPS = 100
 
 def clust(arr):
 	p = impute.pdn(arr)
 	p[np.diag_indices(p.shape[0])] = sys.maxint
 	mins = np.min(p, axis=0)
 	return float(np.sum(mins<(THRESHOLD*arr.shape[1])))/p.shape[0]
+
+def ecdf(a):
+	s = np.sort(a)
+	yvals = np.arange(len(s))/float(len(s))
+	return (s,yvals)
+
+def lkcor(a, dels, truth):
+	p = multiprocessing.Pool(processes = multiprocessing.cpu_count()-1)
+	delclust = clust(a)
+	delmins = distmins(a)
+	imps = [impute.impute(a,dels) for i in xrange(CORREPS)]
+	clusts = map(clust, imps)
+	dat = [(i,delclust,dels) for i in imps]
+	liks = p.map(clik1, dat)
+	cerr = np.abs(np.array(clusts)-truth)
+	plt.scatter(liks,cerr)
+	plt.show()
+	return (liks,cerr)
+
+def lkcheat((a, origmins)):
+	return ks(distmins(a), origmins)[1]
+
 
 def impute_xval(c, dfrac=DELS):
 #	al = AlignIO.read(path, 'fasta')

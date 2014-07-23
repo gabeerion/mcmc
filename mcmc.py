@@ -7,9 +7,9 @@ import imp_mcmc as im
 import mifunc as mf
 from Bio import AlignIO
 from scipy.stats import norm
-from scipy.stats import ks_2samp as ks
+from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
-CCLASS_REPS = 100
+CCLASS_REPS = 10000
 STEPS = 10000
 IMPS = 40
 BOOTREPS = 100
@@ -19,6 +19,8 @@ OUT_STATES = 'mcmc_states_clust.csv'
 ALIGNFILE = 'mcmc_test_dels.csv'
 RDIST = 'brfast.csv'
 ORDERFUNC = np.min
+LC_DIST = 'clust_ratios.csv'
+LC_STATES = 'mcmc_states_clust.csv'
 
 
 def clust(arr):
@@ -179,37 +181,40 @@ def lclass(al, imps):
 	reps = [(al,delclust,imps)]*CCLASS_REPS
 	ratios = P.map(c,reps)
 	np.savetxt(OUT_RATIOS, ratios, delimiter=',')		# Save ratios?
-	return norm(*norm.fit(ratios))
+	return gk(ratios)
 
 def mcmc_clust(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
+	allen = al.shape[0]
+	seqlen = al.shape[1]
+	delclust = clust(al)
 	
 	print 'Building likelihood distributions...'
-	rdist = np.genfromtxt(RDIST, delimiter=',')
-	ldist = norm(*norm.fit(rdist))
-	pdist = cclass(al, imps)
+	try: 
+		pdist = gk(np.genfromtxt(LC_DIST, delimiter=','))
+	except IOError: 
+		print 'Existing distribution not found, building...'
+		pdist = cclass(al, imps)
 
 	print 'Starting MCMC:'
 	print 'Step#\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
 	old = impute.impute(al,imps, orderfunc=ORDERFUNC)
-	old_tt = tt.ttratio(old)
-	old_lik = ldist.pdf(old_tt)
-	old_plik = pdist.pdf(old_tt)
+	old_lik = mlik((old,delclust,allen))
+	old_plik = pdist(old_lik)
 
 	states = [(clust(old),old_lik,old_plik,old_lik,old_plik,1)]
 
 	for i in xrange(STEPS):
 		prop = impute.impute(al,imps, orderfunc=ORDERFUNC)
-		prop_tt = tt.ttratio(prop)
-		prop_lik = ldist.pdf(prop_tt)
-		prop_plik = pdist.pdf(prop_tt)
+		prop_lik = mlik((prop,delclust,allen))
+		prop_plik = pdist(prop_lik)
 
 		a = (prop_lik/old_lik)*(old_plik/prop_plik)
 		states.append((clust(old),prop_lik,prop_plik,old_lik,old_plik,a))
 		print '%d\t|%2f\t|%2f\t|%2f\t|%2f\t|%e' % (i+1,prop_lik,prop_plik,old_lik,old_plik,a)
 		if random.random()<a:
-			old, old_tt, old_lik, old_plik = prop, prop_tt, prop_lik, prop_plik
+			old, old_lik, old_plik = prop, prop_lik, prop_plik
 
 	states.append((clust(old),prop_lik,prop_plik,old_lik,old_plik,a))
-	np.savetxt(OUT_STATES, np.array(states), delimiter=',')
+	np.savetxt(LC_STATES, np.array(states), delimiter=',')
 
 if __name__ == '__main__': main()

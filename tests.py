@@ -33,11 +33,11 @@ def lkcor(a, dels, truth):
 	delmins = distmins(a)
 	imps = [impute.impute(a,dels) for i in xrange(CORREPS)]
 	clusts = map(clust, imps)
-	dat = [(i,delclust,dels) for i in imps]
+	dat = [(i,delclust,a.shape[0]) for i in imps]
 	liks = p.map(clik1, dat)
 	cerr = np.abs(np.array(clusts)-truth)
-	plt.scatter(liks,cerr)
-	plt.show()
+#	plt.scatter(liks,cerr)
+#	plt.show()
 	return (liks,cerr)
 
 def lkcheat((a, origmins)):

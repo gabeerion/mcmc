@@ -10,7 +10,7 @@ from scipy.stats import norm
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
 CCLASS_REPS = 10000
-STEPS = 10000
+STEPS = 10
 IMPS = 40
 BOOTREPS = 100
 THRESHOLD = 0.01
@@ -19,7 +19,7 @@ OUT_STATES = 'mcmc_states_clust.csv'
 ALIGNFILE = 'mcmc_test_dels.csv'
 RDIST = 'brfast.csv'
 ORDERFUNC = np.min
-LC_DIST = 'clust_ratios.csv'
+LC_DIST = 'mcmc_ratios_clust.csv'
 LC_STATES = 'mcmc_states_clust.csv'
 
 

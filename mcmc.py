@@ -1,6 +1,6 @@
 #! /usr/bin/python
 
-import tt, impute, multiprocessing, random, sys
+import tt, impute, time, multiprocessing, random, sys
 import numpy as np
 import scratch as s
 import imp_mcmc as im
@@ -10,8 +10,8 @@ from scipy.stats import norm
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
 CCLASS_REPS = 10000
-STEPS = 10
-IMPS = 40
+STEPS = 25000
+IMPS = 29
 BOOTREPS = 100
 THRESHOLD = 0.01
 OUT_RATIOS = 'mcmc_ratios_clust.csv'
@@ -73,6 +73,14 @@ def klik2((al,origmins)):
 		dm.extend(distmins(boot))
 	return ks(origmins,dm)[1]
 
+def clik((al,origclust,dellen)):
+	allen = al.shape[0]
+	stats = []
+	for i in xrange(BOOTREPS):
+		boot = al[np.random.choice(xrange(allen),dellen,replace=0)]
+		stats.append(clust(boot))
+	return norm(*norm.fit(stats)).pdf(origclust)
+
 def clik1((al,origclust,dellen)):
 	allen = al.shape[0]
 	stats = []
@@ -91,7 +99,7 @@ def clik2((al,origclust,dellen)):
 
 
 def cbootlik((al, dellen)):
-	return clust(np.array(random.sample(al,dellen)))
+	return clust(al[np.random.choice(xrange(al.shape[0]),dellen,replace=0)])
 P = multiprocessing.Pool(processes=multiprocessing.cpu_count())
 def mlik((al,origclust,dellen)):
 	allen = al.shape[0]
@@ -217,4 +225,4 @@ def mcmc_clust(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IM
 	states.append((clust(old),prop_lik,prop_plik,old_lik,old_plik,a))
 	np.savetxt(LC_STATES, np.array(states), delimiter=',')
 
-if __name__ == '__main__': main()
+if __name__ == '__main__': mcmc_clust()

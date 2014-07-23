@@ -8,7 +8,7 @@ import mifunc as mf
 from Bio import AlignIO
 from scipy.stats import norm, ks_2samp as ks
 from mcmc import distmins, clik1, clik2
-from matplotlib import pyplot as plt
+#from matplotlib import pyplot as plt
 
 DELS = .4
 IMPUTATIONS = 10

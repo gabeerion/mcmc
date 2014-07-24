@@ -1,6 +1,6 @@
 #! /usr/bin/python
 
-import tt, impute, time, multiprocessing, random, sys
+import tt, impute, time, multiprocessing, random, sys, math
 import numpy as np
 import scratch as s
 import imp_mcmc as im
@@ -9,18 +9,20 @@ from Bio import AlignIO
 from scipy.stats import norm
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
-CCLASS_REPS = 10000
-STEPS = 25000
+CCLASS_REPS = 100000
+STEPS = 50000
 IMPS = 29
 BOOTREPS = 100
 THRESHOLD = 0.01
-OUT_RATIOS = 'mcmc_ratios_clust.csv'
+OUT_RATIOS = 'mcmc_ratios_mp.csv'
 OUT_STATES = 'mcmc_states_clust.csv'
-ALIGNFILE = 'mcmc_test_dels.csv'
+ALIGNFILE = 'bwg_del.csv'
 RDIST = 'brfast.csv'
 ORDERFUNC = np.min
 LC_DIST = 'mcmc_ratios_clust.csv'
 LC_STATES = 'mcmc_states_clust.csv'
+MP_DIST = 'mcmc_ratios_mp.csv'
+MP_STATES = 'mcmc_states_mp.csv'
 
 
 def clust(arr):
@@ -42,7 +44,7 @@ def c((al, alclust, imps)):
 	allen = al.shape[0]
 	seqlen = al.shape[1]
 	b = impute.impute(al,imps,orderfunc=ORDERFUNC)
-	return clik1((b,alclust,allen))
+	return clik((b,alclust,allen))
 
 def k(a):
 	al = a[0]
@@ -106,6 +108,23 @@ def mlik((al,origclust,dellen)):
 	dat = ((al,dellen) for i in xrange(BOOTREPS))
 	stats = P.map(cbootlik, dat)
 	return norm(*norm.fit(stats)).pdf(origclust)
+def cbl2(al, dellen, reps, Q):
+	for i in xrange(reps):
+		Q.put(clust(al[np.random.choice(xrange(al.shape[0]),dellen,replace=0)]))
+def mlike2((al,origclust,dellen)):
+	allen = al.shape[0]
+	Q = multiprocessing.Queue()
+	numprocs = multiprocessing.cpu_count()
+	reps = int(math.ceil(float(BOOTREPS)/numprocs)*numprocs)
+	procs = []
+	data = []
+	for i in xrange(numprocs):
+		p = multiprocessing.Process(target = cbl2, args=(al,dellen,reps,Q))
+		procs.append(p)
+		p.start()
+	for i in xrange(reps):
+		data.append(Q.get())
+	return norm(*norm.fit(data)).pdf(origclust)
 
 
 def tlik((al,origtt,dellen)):
@@ -201,19 +220,19 @@ def mcmc_clust(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IM
 		pdist = gk(np.genfromtxt(LC_DIST, delimiter=','))
 	except IOError: 
 		print 'Existing distribution not found, building...'
-		pdist = cclass(al, imps)
+		pdist = lclass(al, imps)
 
 	print 'Starting MCMC:'
 	print 'Step#\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
 	old = impute.impute(al,imps, orderfunc=ORDERFUNC)
-	old_lik = mlik((old,delclust,allen))
+	old_lik = clik((old,delclust,allen))
 	old_plik = pdist(old_lik)
 
 	states = [(clust(old),old_lik,old_plik,old_lik,old_plik,1)]
 
 	for i in xrange(STEPS):
 		prop = impute.impute(al,imps, orderfunc=ORDERFUNC)
-		prop_lik = mlik((prop,delclust,allen))
+		prop_lik = clik((prop,delclust,allen))
 		prop_plik = pdist(prop_lik)
 
 		a = (prop_lik/old_lik)*(old_plik/prop_plik)
@@ -225,4 +244,56 @@ def mcmc_clust(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IM
 	states.append((clust(old),prop_lik,prop_plik,old_lik,old_plik,a))
 	np.savetxt(LC_STATES, np.array(states), delimiter=',')
 
-if __name__ == '__main__': mcmc_clust()
+def mcmc_mp(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
+	allen = al.shape[0]
+	seqlen = al.shape[1]
+	delclust = clust(al)
+	
+	print 'Building likelihood distributions...'
+	try: 
+		pdist = gk(np.genfromtxt(MP_DIST, delimiter=','))
+	except IOError: 
+		print 'Existing distribution not found, building...'
+		pdist = lclass(al, imps)
+
+	print 'Starting MCMC:'
+	print 'Step#\tOld Clust\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
+	old = impute.impute(al,imps, orderfunc=ORDERFUNC)
+	old_lik = clik((old,delclust,allen))
+	old_plik = pdist(old_lik)
+	old_clust = clust(old)
+
+	states = [(old_clust,old_lik,old_plik,old_lik,old_plik,1)]
+
+	#Multithreading
+	def genstate(al,imps,pdist,reps,Q,seed):
+		random.seed(seed)
+		impute.np.random.seed(seed)
+		allen = al.shape[0]
+		delclust = clust(al)
+		for i in xrange(reps):
+			prop = impute.impute(al,imps)
+			prop_lik = clik((prop,delclust,allen))
+			prop_plik = pdist(prop_lik)
+			prop_clust = clust(prop)
+			Q.put((prop, prop_lik, prop_plik, prop_clust))
+
+	Q, procs, data = multiprocessing.Queue(), [], []
+	numprocs = multiprocessing.cpu_count()-1
+	reps = -(-STEPS/numprocs)
+	for i in xrange(numprocs):
+		p = multiprocessing.Process(target=genstate, args=(al,imps,pdist,reps,Q,i))
+		procs.append(p)
+		p.start()
+	for i in xrange(reps*numprocs):
+		prop, prop_lik, prop_plik, prop_clust = Q.get()
+		a = (prop_lik/old_lik)*(old_plik/prop_plik)
+		states.append((old_clust,prop_lik,prop_plik,old_lik,old_plik,a))
+		print '%d\t|%2f\t|%2f\t|%2f\t|%2f\t|%2f\t|%e' % (i+1,old_clust,prop_lik,prop_plik,old_lik,old_plik,a)
+		if random.random()<a:
+			old, old_lik, old_plik, old_clust = prop, prop_lik, prop_plik, prop_clust
+
+	states.append((old_clust,prop_lik,prop_plik,old_lik,old_plik,a))
+	np.savetxt(MP_STATES, np.array(states), delimiter=',')
+
+if __name__ == '__main__': mcmc_mp()

@@ -9,8 +9,8 @@ from Bio import AlignIO
 from scipy.stats import norm
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
-CCLASS_REPS = 100000
-STEPS = 50000
+CCLASS_REPS = 300000
+STEPS = 100000
 IMPS = 29
 BOOTREPS = 100
 THRESHOLD = 0.01
@@ -23,6 +23,7 @@ LC_DIST = 'mcmc_ratios_clust.csv'
 LC_STATES = 'mcmc_states_clust.csv'
 MP_DIST = 'mcmc_ratios_mp.csv'
 MP_STATES = 'mcmc_states_mp.csv'
+RAND_OUT = 'randout.csv'
 
 
 def clust(arr):
@@ -244,6 +245,43 @@ def mcmc_clust(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IM
 	states.append((clust(old),prop_lik,prop_plik,old_lik,old_plik,a))
 	np.savetxt(LC_STATES, np.array(states), delimiter=',')
 
+#Multithreaded proposal
+def genstate(al,imps,reps,Q,seed,pdist=None):
+	random.seed(seed)
+	impute.np.random.seed(seed)
+	allen = al.shape[0]
+	delclust = clust(al)
+	for i in xrange(reps):
+		prop = impute.impute(al,imps)
+		prop_lik = clik((prop,delclust,allen))
+		prop_clust = clust(prop)
+		if pdist: 
+			prop_plik = pdist(prop_lik)
+			Q.put((prop, prop_lik, prop_plik, prop_clust))
+		else: Q.put((prop, prop_lik, prop_clust))
+
+def lclass_mp(al, imps):
+	allen = al.shape[0]
+	seqlen = al.shape[1]
+	delclust = clust(al)
+	Q, procs, data = multiprocessing.Queue(), [], []
+	numprocs = multiprocessing.cpu_count()
+	reps = -(-CCLASS_REPS/numprocs)
+	for i in xrange(numprocs):
+		p = multiprocessing.Process(target=genstate, args=(al,imps,reps,Q,i))
+		procs.append(p)
+		p.start()
+	old_percent = 0
+	for i in xrange(reps*numprocs):
+		percent = int(float(i)/(reps*numprocs) * 100)
+		if percent > old_percent: 
+			print '%d percent' % int(percent)
+			old_percent = percent
+		prop, prop_lik, prop_clust = Q.get()
+		data.append(prop_lik)
+	np.savetxt(MP_DIST, data, delimiter=',')		# Save ratios?
+	return gk(data)
+
 def mcmc_mp(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 	allen = al.shape[0]
 	seqlen = al.shape[1]
@@ -254,7 +292,7 @@ def mcmc_mp(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 		pdist = gk(np.genfromtxt(MP_DIST, delimiter=','))
 	except IOError: 
 		print 'Existing distribution not found, building...'
-		pdist = lclass(al, imps)
+		pdist = lclass_mp(al, imps)
 
 	print 'Starting MCMC:'
 	print 'Step#\tOld Clust\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
@@ -265,24 +303,11 @@ def mcmc_mp(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 
 	states = [(old_clust,old_lik,old_plik,old_lik,old_plik,1)]
 
-	#Multithreading
-	def genstate(al,imps,pdist,reps,Q,seed):
-		random.seed(seed)
-		impute.np.random.seed(seed)
-		allen = al.shape[0]
-		delclust = clust(al)
-		for i in xrange(reps):
-			prop = impute.impute(al,imps)
-			prop_lik = clik((prop,delclust,allen))
-			prop_plik = pdist(prop_lik)
-			prop_clust = clust(prop)
-			Q.put((prop, prop_lik, prop_plik, prop_clust))
-
 	Q, procs, data = multiprocessing.Queue(), [], []
 	numprocs = multiprocessing.cpu_count()-1
 	reps = -(-STEPS/numprocs)
 	for i in xrange(numprocs):
-		p = multiprocessing.Process(target=genstate, args=(al,imps,pdist,reps,Q,i))
+		p = multiprocessing.Process(target=genstate, args=(al,imps,reps,Q,i,pdist))
 		procs.append(p)
 		p.start()
 	for i in xrange(reps*numprocs):
@@ -295,5 +320,25 @@ def mcmc_mp(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 
 	states.append((old_clust,prop_lik,prop_plik,old_lik,old_plik,a))
 	np.savetxt(MP_STATES, np.array(states), delimiter=',')
+
+def unifsamp((allen,seqlen), origclust, dellen):
+	def boot((allen,seqlen), origclust, dellen, reps, Q):	
+		for i in xrange(reps):
+			boot = np.random.random_integers(0,5, size=(allen,seqlen))
+			if clust(boot) == 0: Q.put(0.0)
+			else: Q.put(clik((boot,origclust,dellen)))
+	Q, procs, data = multiprocessing.Queue(), [], []
+	numprocs = multiprocessing.cpu_count()-1
+	reps = -(-CCLASS_REPS/numprocs)
+	for i in xrange(numprocs):
+		p = multiprocessing.Process(target = boot, args = ((allen,seqlen), origclust, dellen, reps, Q))
+		procs.append(p)
+		p.start()
+	for i in xrange(reps*numprocs):
+		x = Q.get()
+		data.append(x)
+		print i, x
+	np.savetxt(RAND_OUT, data, delimiter=',')
+
 
 if __name__ == '__main__': mcmc_mp()

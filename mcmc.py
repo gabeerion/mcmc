@@ -343,7 +343,7 @@ def lclass_ttmp(al, imps, lik):
 	allen = al.shape[0]
 	seqlen = al.shape[1]
 	delclust = clust(al)
-	Q, procs, data = multiprocessing.Queue(), [], []
+	Q, procs, data = multiprocessing.Queue(maxsize=MQS), [], []
 	numprocs = multiprocessing.cpu_count()
 	reps = -(-CCLASS_REPS/numprocs)
 	for i in xrange(numprocs):
@@ -385,7 +385,7 @@ def mcmc_ttmp(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMP
 
 	states = [(old_clust,old_lik,old_plik,old_lik,old_plik,1)]
 
-	Q, procs, data = multiprocessing.Queue(), [], []
+	Q, procs, data = multiprocessing.Queue(maxsize=MQS), [], []
 	numprocs = multiprocessing.cpu_count()-1
 	reps = -(-STEPS/numprocs)
 	for i in xrange(numprocs):

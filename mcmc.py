@@ -9,11 +9,12 @@ from Bio import AlignIO
 from scipy.stats import norm
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
-CCLASS_REPS = 300
-STEPS = 100
+CCLASS_REPS = 300000
+STEPS = 100000
 IMPS = 29
 BOOTREPS = 100
 THRESHOLD = 0.01
+MQS = 500
 OUT_RATIOS = 'mcmc_ratios_mp.csv'
 OUT_STATES = 'mcmc_states_clust.csv'
 ALIGNFILE = 'bwg_del.csv'
@@ -250,6 +251,7 @@ def mcmc_clust(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IM
 #Multithreaded proposal
 def genstate(al,imps,reps,Q,seed,pdist=None):
 	random.seed(seed)
+	np.random.seed(seed)
 	impute.np.random.seed(seed)
 	allen = al.shape[0]
 	delclust = clust(al)

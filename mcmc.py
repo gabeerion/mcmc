@@ -27,6 +27,10 @@ MP_STATES = 'mcmc_states_mp.csv'
 TTMP_DIST = 'mcmc_ratios_ttmp.csv'
 TTMP_STATES = 'mcmc_states_ttmp.csv'
 RAND_OUT = 'randout.csv'
+V_TDIST = 'mcmc_target_v.csv'
+V_PDIST = 'mcmc_prop_v.csv'
+V_STATES = 'mcmc_states_v.csv'
+V_TBOOT = 100000
 
 
 def clust(arr):
@@ -138,6 +142,22 @@ def tlik((al,origtt,dellen)):
 		boot = np.array(random.sample(al,dellen))
 		stats.append(tt.ttratio(boot))
 	return norm(*norm.fit(stats)).pdf(origtt)
+
+def vboot((al,dellen)):
+	allen = al.shape[0]
+	stats = []
+	for i in xrange(BOOTREPS):
+		boot = al[np.random.choice(xrange(allen),dellen,replace=0)]
+		stats.append(clust(boot))
+	return (np.mean(stats), np.var(stats))
+
+def vlik((al,dellen,target)):
+	allen = al.shape[0]
+	stats = []
+	for i in xrange(BOOTREPS):
+		boot = al[np.random.choice(xrange(allen),dellen,replace=0)]
+		stats.append(clust(boot))
+	return target.pdf(np.mean(stats))
 
 def cmm((al,origclust,dellen)):
 	allen = al.shape[0]
@@ -423,4 +443,113 @@ def unifsamp((allen,seqlen), origclust, dellen):
 	np.savetxt(RAND_OUT, data, delimiter=',')
 
 
-if __name__ == '__main__': mcmc_ttmp()
+#Multithreaded proposal
+def gsv(al,imps,reps,Q,seed):
+	random.seed(seed)
+	np.random.seed(seed)
+	impute.np.random.seed(seed)
+	allen = al.shape[0]
+	delclust = clust(al)
+	for i in xrange(reps):
+		prop = impute.impute(al,imps)
+		prop_cclass = vboot((prop,allen))[0]
+		prop_clust = clust(prop)
+		Q.put((prop, prop_cclass, prop_clust))
+
+def pclass_v(al, imps):
+	allen = al.shape[0]
+	seqlen = al.shape[1]
+	delclust = clust(al)
+	Q, procs, data = multiprocessing.Queue(), [], []
+	numprocs = multiprocessing.cpu_count()
+	reps = -(-CCLASS_REPS/numprocs)
+	for i in xrange(numprocs):
+		p = multiprocessing.Process(target=gsv, args=(al,imps,reps,Q,random.randint(0,numprocs**2)))
+		procs.append(p)
+		p.start()
+	old_percent = 0
+	for i in xrange(reps*numprocs):
+		percent = int(float(i)/(reps*numprocs) * 100)
+		if percent > old_percent: 
+			print '%d percent' % int(percent)
+			old_percent = percent
+		prop, prop_cclass, prop_clust = Q.get()
+		data.append(prop_cclass)
+	np.savetxt(V_PDIST, data, delimiter=',')		# Save ratios?
+	return norm(*norm.fit(data))
+
+def tclass_v(al):
+	allen = al.shape[0]
+	seqlen = al.shape[1]
+	delclust = clust(al)
+	Q, procs, data = multiprocessing.Queue(maxsize=1000), [], []
+	numprocs = multiprocessing.cpu_count()
+	reps = -(-V_TBOOT/numprocs)
+	def bootclust(al,reps,Q,seed):
+		np.random.seed(seed)
+		for i in xrange(reps):
+			Q.put(clust(al[:,np.random.choice(xrange(al.shape[1]),al.shape[1],replace=1)]))
+	for i in xrange(numprocs):
+		p = multiprocessing.Process(target=bootclust, args=(al,reps,Q,random.randint(0,numprocs**2)))
+		procs.append(p)
+		p.start()
+	old_percent = 0
+	for i in xrange(reps*numprocs):
+		percent = int(float(i)/(reps*numprocs) * 100)
+		if percent > old_percent: 
+			print '%d percent' % int(percent)
+			old_percent = percent
+		data.append(Q.get())
+	np.savetxt(V_TDIST, data, delimiter=',')
+	return norm(*norm.fit(data))
+
+def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
+	allen = al.shape[0]
+	seqlen = al.shape[1]
+	delclust = clust(al)
+	
+	print 'Calculating proposal distribution...'
+	try: 
+		pdist = norm(*norm.fit(np.genfromtxt(V_PDIST, delimiter=',')))
+	except IOError: 
+		print 'Existing distribution not found, building...'
+		pdist = pclass_v(al, imps)
+
+	print 'Calculating target distribution...'
+	try:
+		tdist = norm(*norm.fit(np.genfromtxt(V_TDIST, delimiter=',')))
+	except IOError:
+		print 'Existing distribution not found, building...'
+		tdist = tclass_v(al)
+
+	print 'Starting MCMC:'
+	print 'Step#\tOld Clust\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
+	old = impute.impute(al,imps, orderfunc=ORDERFUNC)
+	old_cclass = vboot((old,allen))[0]
+	old_lik = tdist.pdf(old_cclass)
+	old_plik = pdist.pdf(old_cclass)
+	old_clust = clust(old)
+
+	states = [(old_clust,old_cclass,old_lik,old_plik,old_clust,old_cclass,old_lik,old_plik,1.0)]
+
+	Q, procs, data = multiprocessing.Queue(), [], []
+	numprocs = multiprocessing.cpu_count()-1
+	reps = -(-STEPS/numprocs)
+	for i in xrange(numprocs):
+		p = multiprocessing.Process(target=gsv, args=(al,imps,reps,Q,random.randint(0,numprocs**2)))
+		procs.append(p)
+		p.start()
+	for i in xrange(reps*numprocs):
+		prop, prop_cclass, prop_clust = Q.get()
+		prop_lik, prop_plik = tdist.pdf(prop_cclass), pdist.pdf(prop_cclass)
+		a = (prop_lik/old_lik)*(old_plik/prop_plik)
+		states.append((prop_clust,prop_cclass,prop_lik,prop_plik,old_clust,old_cclass,old_lik,old_plik,a))
+		print '%d\t|%2f\t|%2f\t|%2f\t|%2f\t|%2f\t|%e' % (i+1,old_clust,prop_lik,prop_plik,old_lik,old_plik,a)
+		if random.random()<a:
+			old, old_cclass, old_lik, old_plik, old_clust = prop, prop_cclass, prop_lik, prop_plik, prop_clust
+
+	states.append((prop_clust,prop_cclass,prop_lik,prop_plik,old_clust,old_cclass,old_lik,old_plik,a))
+	np.savetxt(V_STATES, np.array(states), delimiter=',')
+
+
+if __name__ == '__main__': mcmc_v()

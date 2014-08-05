@@ -12,9 +12,9 @@ from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 CCLASS_REPS = 300000
 STEPS = 100000
 IMPS = 29
-BOOTREPS = 100
+BOOTREPS = 10
 THRESHOLD = 0.01
-MQS = 500
+MQS = 1000
 OUT_RATIOS = 'mcmc_ratios_mp.csv'
 OUT_STATES = 'mcmc_states_clust.csv'
 ALIGNFILE = 'bwg_del.csv'
@@ -29,7 +29,7 @@ TTMP_STATES = 'mcmc_states_ttmp.csv'
 RAND_OUT = 'randout.csv'
 V_TDIST = 'mcmc_target_v.csv'
 V_PDIST = 'mcmc_prop_v.csv'
-V_STATES = 'mcmc_states_v.csv'
+V_STATES = 'mcmc_states_vc.csv'
 V_TBOOT = 100000
 
 
@@ -460,7 +460,7 @@ def pclass_v(al, imps):
 	allen = al.shape[0]
 	seqlen = al.shape[1]
 	delclust = clust(al)
-	Q, procs, data = multiprocessing.Queue(), [], []
+	Q, procs, data = multiprocessing.Queue(maxsize=MQS), [], []
 	numprocs = multiprocessing.cpu_count()
 	reps = -(-CCLASS_REPS/numprocs)
 	for i in xrange(numprocs):
@@ -482,7 +482,7 @@ def tclass_v(al):
 	allen = al.shape[0]
 	seqlen = al.shape[1]
 	delclust = clust(al)
-	Q, procs, data = multiprocessing.Queue(maxsize=1000), [], []
+	Q, procs, data = multiprocessing.Queue(maxsize=MQS), [], []
 	numprocs = multiprocessing.cpu_count()
 	reps = -(-V_TBOOT/numprocs)
 	def bootclust(al,reps,Q,seed):
@@ -501,7 +501,7 @@ def tclass_v(al):
 			old_percent = percent
 		data.append(Q.get())
 	np.savetxt(V_TDIST, data, delimiter=',')
-	return norm(*norm.fit(data))
+	return np.std(data)
 
 def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 	allen = al.shape[0]
@@ -509,7 +509,7 @@ def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 	delclust = clust(al)
 	
 	print 'Calculating proposal distribution...'
-	try: 
+	try:
 		pdist = norm(*norm.fit(np.genfromtxt(V_PDIST, delimiter=',')))
 	except IOError: 
 		print 'Existing distribution not found, building...'
@@ -517,10 +517,10 @@ def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 
 	print 'Calculating target distribution...'
 	try:
-		tdist = norm(*norm.fit(np.genfromtxt(V_TDIST, delimiter=',')))
+		tdist = norm(delclust, np.std(np.genfromtxt(V_TDIST, delimiter=',')))
 	except IOError:
 		print 'Existing distribution not found, building...'
-		tdist = tclass_v(al)
+		tdist = norm(delclust, tclass_v(al))
 
 	print 'Starting MCMC:'
 	print 'Step#\tOld Clust\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
@@ -532,7 +532,7 @@ def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 
 	states = [(old_clust,old_cclass,old_lik,old_plik,old_clust,old_cclass,old_lik,old_plik,1.0)]
 
-	Q, procs, data = multiprocessing.Queue(), [], []
+	Q, procs, data = multiprocessing.Queue(maxsize=MQS), [], []
 	numprocs = multiprocessing.cpu_count()-1
 	reps = -(-STEPS/numprocs)
 	for i in xrange(numprocs):
@@ -552,4 +552,11 @@ def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 	np.savetxt(V_STATES, np.array(states), delimiter=',')
 
 
-if __name__ == '__main__': mcmc_v()
+if __name__ == '__main__': 
+	args = sys.argv[1:]
+	name = args[0][:-4]
+	V_TDIST = '%s_mcmc_target.csv' % name
+	V_PDIST = '%s_mcmc_prop.csv' % name
+	V_STATES = '%s_mcmc_states.csv' % name
+	print V_TDIST, V_PDIST, V_STATES
+	mcmc_v(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)

@@ -9,8 +9,8 @@ from Bio import AlignIO
 from scipy.stats import norm
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
-CCLASS_REPS = 300000
-STEPS = 100000
+CCLASS_REPS = 30
+STEPS = 10
 IMPS = 29
 BOOTREPS = 100
 THRESHOLD = 0.01
@@ -30,7 +30,7 @@ RAND_OUT = 'randout.csv'
 V_TDIST = 'mcmc_target_v.csv'
 V_PDIST = 'mcmc_prop_v.csv'
 V_STATES = 'mcmc_states_vc.csv'
-V_TBOOT = 100000
+V_TBOOT = 10
 
 
 def clust(arr):
@@ -288,7 +288,7 @@ def lclass_mp(al, imps):
 	allen = al.shape[0]
 	seqlen = al.shape[1]
 	delclust = clust(al)
-	Q, procs, data = multiprocessing.Queue(), [], []
+	Q, procs, data = multiprocessing.Queue(maxsize=MQS), [], []
 	numprocs = multiprocessing.cpu_count()
 	reps = -(-CCLASS_REPS/numprocs)
 	for i in xrange(numprocs):
@@ -555,8 +555,13 @@ def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 if __name__ == '__main__': 
 	args = sys.argv[1:]
 	name = args[0][:-4]
-	V_TDIST = '%s_mcmc_target.csv' % name
-	V_PDIST = '%s_mcmc_prop.csv' % name
-	V_STATES = '%s_mcmc_states.csv' % name
-	print V_TDIST, V_PDIST, V_STATES
-	mcmc_v(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)
+	#V_TDIST = '%s_mcmc_target.csv' % name
+	#_PDIST = '%s_mcmc_prop.csv' % name
+	#V_STATES = '%s_mcmc_states.csv' % name
+	#print V_TDIST, V_PDIST, V_STATES
+	#mcmc_v(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)
+	
+	MP_DIST = '%s_mp_ratios.csv' % name
+	MP_STATES = '%s_mp_states.csv' % name
+	print MP_DIST, MP_STATES
+	mcmc_mp(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)

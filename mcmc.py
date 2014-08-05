@@ -12,7 +12,7 @@ from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 CCLASS_REPS = 300000
 STEPS = 100000
 IMPS = 29
-BOOTREPS = 10
+BOOTREPS = 100
 THRESHOLD = 0.01
 MQS = 1000
 OUT_RATIOS = 'mcmc_ratios_mp.csv'

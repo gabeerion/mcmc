@@ -9,8 +9,8 @@ from Bio import AlignIO
 from scipy.stats import norm
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
-CCLASS_REPS = 30
-STEPS = 10
+CCLASS_REPS = 300000
+STEPS = 100000
 IMPS = 29
 BOOTREPS = 100
 THRESHOLD = 0.01
@@ -30,7 +30,7 @@ RAND_OUT = 'randout.csv'
 V_TDIST = 'mcmc_target_v.csv'
 V_PDIST = 'mcmc_prop_v.csv'
 V_STATES = 'mcmc_states_vc.csv'
-V_TBOOT = 10
+V_TBOOT = 100000
 
 
 def clust(arr):

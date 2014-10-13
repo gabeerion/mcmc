@@ -115,3 +115,38 @@ def impute(np.ndarray[np.int_t, ndim=2] al, unsigned int imps, orderfunc=ORDERFU
 			new[allen+i,sites[j]] = wsw(siteprobs, wsrands[i,j], total)
 #		print np.sum(new[allen+i]!=new[ind]), dist
 	return new
+
+# Imputation with random decreases in edge distances
+@cython.boundscheck(False)
+def impute_shrink(np.ndarray[np.int_t, ndim=2] al, unsigned int imps, orderfunc=ORDERFUNC):
+	cdef unsigned int allen = al.shape[0]
+	cdef unsigned int seqlen = al.shape[1]
+	cdef np.ndarray[np.uint_t, ndim=2] pd = pdn(al)
+	pd[np.diag_indices(pd.shape[0])] = sys.maxint
+	cdef np.ndarray[np.uint_t, ndim=1] distances = orderfunc(pd, axis=0).astype(np.uint)
+	cdef np.ndarray[np.int_t, ndim=2] ps = pssm(al)
+	cdef np.ndarray[np.float_t, ndim=1] mutprobs = np.ones(seqlen, dtype=float)*allen
+	mutprobs -= np.max(ps, axis=0)
+	mutprobs /= np.sum(mutprobs)
+
+	#Time to actually impute
+	cdef np.ndarray[np.int_t, ndim=2] new = np.zeros((allen+imps,seqlen), dtype=np.int)
+	new[:allen] = al
+	cdef unsigned int i, j, dist, ind
+	cdef float total
+	cdef np.ndarray[np.float_t, ndim=2] rands = np.random.random((3,imps))
+	cdef np.ndarray[np.float_t, ndim=2] wsrands = np.random.random((imps, seqlen))
+	cdef np.ndarray[np.uint_t, ndim=1] sites = np.zeros(seqlen, dtype=np.uint)
+	cdef np.ndarray[np.float_t, ndim=1] siteprobs = np.zeros(NUM_CHARS)
+	for i in xrange(imps):
+		dist = int(rands[2,i]*distances[int(rands[0,i]*allen)])
+		ind = int(rands[1,i]*(allen+i))
+		new[allen+i] = new[ind]
+		sites[:dist] = wsnr(mutprobs, dist)
+		for j in xrange(dist):
+			siteprobs[:] = ps[:,sites[j]]
+			total = allen-siteprobs[new[allen+i,sites[j]]]
+			siteprobs[new[allen+i,sites[j]]] = 0
+			new[allen+i,sites[j]] = wsw(siteprobs, wsrands[i,j], total)
+#		print np.sum(new[allen+i]!=new[ind]), dist
+	return new

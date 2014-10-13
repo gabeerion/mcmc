@@ -11,15 +11,16 @@ from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
 CCLASS_REPS = 300000
 STEPS = 100000
-IMPS = 29
+IMPS = 100
 BOOTREPS = 100
-THRESHOLD = 0.01
+THRESHOLD = 0.1
 MQS = 1000
 OUT_RATIOS = 'mcmc_ratios_mp.csv'
 OUT_STATES = 'mcmc_states_clust.csv'
 ALIGNFILE = 'bwg_del.csv'
 RDIST = 'bwgtt.csv'
 ORDERFUNC = np.min
+IMPFUNC = impute.impute_shrink
 LC_DIST = 'mcmc_ratios_clust.csv'
 LC_STATES = 'mcmc_states_clust.csv'
 MP_DIST = 'mcmc_ratios_mp.csv'
@@ -30,7 +31,7 @@ RAND_OUT = 'randout.csv'
 V_TDIST = 'mcmc_target_v.csv'
 V_PDIST = 'mcmc_prop_v.csv'
 V_STATES = 'mcmc_states_vc.csv'
-V_TBOOT = 100000
+V_TBOOT = 50000
 
 
 def clust(arr):
@@ -133,7 +134,6 @@ def mlike2((al,origclust,dellen)):
 	for i in xrange(reps):
 		data.append(Q.get())
 	return norm(*norm.fit(data)).pdf(origclust)
-
 
 def tlik((al,origtt,dellen)):
 	allen = al.shape[0]
@@ -451,7 +451,7 @@ def gsv(al,imps,reps,Q,seed):
 	allen = al.shape[0]
 	delclust = clust(al)
 	for i in xrange(reps):
-		prop = impute.impute(al,imps)
+		prop = IMPFUNC(al,imps)
 		prop_cclass = vboot((prop,allen))[0]
 		prop_clust = clust(prop)
 		Q.put((prop, prop_cclass, prop_clust))
@@ -524,7 +524,7 @@ def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 
 	print 'Starting MCMC:'
 	print 'Step#\tOld Clust\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
-	old = impute.impute(al,imps, orderfunc=ORDERFUNC)
+	old = IMPFUNC(al,imps, orderfunc=ORDERFUNC)
 	old_cclass = vboot((old,allen))[0]
 	old_lik = tdist.pdf(old_cclass)
 	old_plik = pdist.pdf(old_cclass)
@@ -552,16 +552,17 @@ def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 	np.savetxt(V_STATES, np.array(states), delimiter=',')
 
 
+
 if __name__ == '__main__': 
 	args = sys.argv[1:]
 	name = args[0][:-4]
-	#V_TDIST = '%s_mcmc_target.csv' % name
-	#_PDIST = '%s_mcmc_prop.csv' % name
-	#V_STATES = '%s_mcmc_states.csv' % name
-	#print V_TDIST, V_PDIST, V_STATES
-	#mcmc_v(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)
+	V_TDIST = '%s_mcmc_target.csv' % name
+	V_PDIST = '%s_mcmc_prop.csv' % name
+	V_STATES = '%s_mcmc_states.csv' % name
+	print V_TDIST, V_PDIST, V_STATES
+	mcmc_v(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)
 	
-	MP_DIST = '%s_mp_ratios.csv' % name
-	MP_STATES = '%s_mp_states.csv' % name
-	print MP_DIST, MP_STATES
-	mcmc_mp(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)
+	#MP_DIST = '%s_mp_ratios.csv' % name
+	#MP_STATES = '%s_mp_states.csv' % name
+	#print MP_DIST, MP_STATES
+	#mcmc_mp(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)

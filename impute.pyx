@@ -150,3 +150,40 @@ def impute_shrink(np.ndarray[np.int_t, ndim=2] al, unsigned int imps, orderfunc=
 			new[allen+i,sites[j]] = wsw(siteprobs, wsrands[i,j], total)
 #		print np.sum(new[allen+i]!=new[ind]), dist
 	return new
+
+# MCMC proposal -- not stationary
+# Annotations is [nearest neighbor, dist, most frequent aa]
+# Mutprobs should just be allen - max num changes
+# PD matrix should have seqlen on the diagonals
+def prop(np.ndarray[np.int_t, ndim=2] al, np.ndarray[np.uint_t, ndim=2] pd, \
+	np.ndarray[np.int_t, ndim=2] pssm, np.ndarray[np.float_t, ndim=1] mutprobs, \
+	unsigned int changes, float threshold):
+	cdef unsigned int allen = al.shape[0]
+	cdef unsigned int seqlen = al.shape[1]
+
+#	cdef np.ndarray[np.int_t, ndim=2] new = np.copy(al)
+	
+	cdef unsigned int i, j, seq, site, cur
+	cdef np.ndarray[np.uint_t, ndim=2] sites = np.zeros((changes,2),dtype=np.uint)
+	cdef np.ndarray[np.uint_t, ndim=1] nucs = np.arange(5,dtype=np.uint)
+	sites[:,0] = np.random.randint(0, allen, size=changes)
+	sites[:,1] = wsnr(mutprobs, changes)
+	for i in xrange(changes):
+		seq, site = sites[i]
+		cur = al[seq,site]
+		al[seq,site] = nucs[(cur+np.random.randint(1,5))%5]
+		for j in xrange(allen):
+			if j == seq: continue
+			elif al[j,site] != al[seq,site]:
+				pd[j,seq] += 1
+				pd[seq,j] += 1
+			elif al[j,site] == al[seq,site]:
+				pd[j,seq] -= 1
+				pd[seq,j] -= 1
+		pssm[cur,site] -= 1
+		pssm[al[seq,site],site] += 1
+		mutprobs[site] = allen-np.max(pssm[:,site])
+	cdef np.ndarray[np.uint_t, ndim=1] mins = np.min(pd, axis=0)
+	cdef int thresh_int = int(threshold*seqlen)
+	cdef float clust = np.sum(mins<thresh_int)/float(allen)
+	return clust

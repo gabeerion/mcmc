@@ -10,7 +10,7 @@ from scipy.stats import norm
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 
 CCLASS_REPS = 300000
-STEPS = 100000
+STEPS = 100
 IMPS = 100
 BOOTREPS = 100
 THRESHOLD = 0.1
@@ -28,10 +28,13 @@ MP_STATES = 'mcmc_states_mp.csv'
 TTMP_DIST = 'mcmc_ratios_ttmp.csv'
 TTMP_STATES = 'mcmc_states_ttmp.csv'
 RAND_OUT = 'randout.csv'
-V_TDIST = 'mcmc_target_v.csv'
-V_PDIST = 'mcmc_prop_v.csv'
-V_STATES = 'mcmc_states_vc.csv'
-V_TBOOT = 50000
+V_TDIST = 'ns_target_v.csv'
+V_PDIST = 'ns_prop_v.csv'
+V_STATES = 'ns_states_vc.csv'
+V_TBOOT = 10
+MMEAN = 0.01
+MSTD = 0.001
+PLIK_REPS = 8
 
 
 def clust(arr):
@@ -551,16 +554,90 @@ def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 	states.append((prop_clust,prop_cclass,prop_lik,prop_plik,old_clust,old_cclass,old_lik,old_plik,a))
 	np.savetxt(V_STATES, np.array(states), delimiter=',')
 
+def alp(old, mutprobs, changes):
+	nucs = np.arange(5,dtype=np.int)
+	ret = np.copy(old)
+	for seq, site in zip(np.random.randint(old.shape[0], size=changes),impute.wsnr(mutprobs.astype(np.float),changes)):
+		ret[seq,site] = nucs[(old[seq,site]+np.random.randint(1,5))%5]
+	return ret, old.shape[0]-np.max(impute.pssm(old), axis=0)
+
+def rboot((al,dellen,rand)):
+	np.random.seed(rand)
+	allen = al.shape[0]
+	stats = []
+	for i in xrange(BOOTREPS):
+		boot = al[np.random.choice(xrange(allen),dellen,replace=0)]
+		stats.append(clust(boot))
+	return (np.mean(stats), np.var(stats))
+def vplik(old, imps, cclass):
+	p = multiprocessing.Pool(multiprocessing.cpu_count())
+	preimage = [(old,imps,random.randint(0,1000000)) for i in xrange(PLIK_REPS)]
+	print preimage
+	image = np.array(p.map(rboot,preimage))
+	return norm(*norm.fit(image[:,0]))
+
+
+
+def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
+	allen = al.shape[0]
+	seqlen = al.shape[1]
+	delclust = clust(al)
+
+	print 'Calculating target distribution...'
+	try:
+		tdist = norm(delclust, np.std(np.genfromtxt(V_TDIST, delimiter=',')))
+	except IOError:
+		print 'Existing distribution not found, building...'
+		tdist = norm(delclust, tclass_v(al))
+
+	print 'Starting MCMC:'
+	print 'Step#\tOld Clust\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
+	old = IMPFUNC(al,imps, orderfunc=ORDERFUNC)
+	old_cclass = vboot((old,allen))[0]
+	old_tlik = tdist.pdf(old_cclass)
+	old_pdist = vplik(old, imps, cclass)
+	old_clust = clust(old)
+
+	states = [(old_clust,old_cclass,old_tlik,old_clust,old_cclass,old_tlik,1.0)]
+
+#	Q, procs, data = multiprocessing.Queue(maxsize=MQS), [], []
+#	numprocs = multiprocessing.cpu_count()-1
+#	reps = -(-STEPS/numprocs)
+#	for i in xrange(numprocs):
+#		p = multiprocessing.Process(target=gsv, args=(al,imps,reps,Q,random.randint(0,numprocs**2)))
+#		procs.append(p)
+#		p.start()
+#	for i in xrange(reps*numprocs):
+#		prop, prop_cclass, prop_clust = Q.get()
+#		prop_lik, prop_plik = tdist.pdf(prop_cclass), pdist.pdf(prop_cclass)
+#		a = (prop_lik/old_lik)*(old_plik/prop_plik)
+	changes = norm(MMEAN*seqlen, MSTD*seqlen)
+	mutprobs = (allen-np.max(impute.pssm(old), axis=0)).astype(np.float)
+	for i in xrange(STEPS):
+		prop, mutprobs = alp(old, mutprobs, int(changes.rvs()))
+		prop_clust = clust(prop)
+		prop_cclass = vboot((prop,imps))[0]
+		prop_pdist = vplik(old, imps, prop_cclass)
+		prop_tlik = tdist.pdf(prop_cclass)
+		a = prop_tlik/old_tlik * old_pdist.pdf(prop_cclass)/prop_pdist.pdf(old_cclass)
+		states.append((prop_clust,prop_cclass,prop_tlik,old_clust,old_cclass,old_tlik,a))
+		print (i+1,old_clust,prop_clust,prop_tlik,old_tlik,a)
+		print '%d\t|%2f\t|%2f\t|%2f\t|%2f\t|%e' % (i+1,old_clust,prop_clust,prop_tlik,old_tlik,a)
+		if random.random()<a:
+			old, old_cclass, old_tlik, old_pdist, old_clust = prop, prop_cclass, prop_tlik, prop_pdist, prop_clust
+#		states.append((prop_clust,prop_cclass,prop_tlik,prop_plik,old_clust,old_cclass,old_tlik,old_plik,a))
+	np.savetxt(V_STATES, np.array(states), delimiter=',')
+
 
 
 if __name__ == '__main__': 
 	args = sys.argv[1:]
 	name = args[0][:-4]
-	V_TDIST = '%s_mcmc_target.csv' % name
-	V_PDIST = '%s_mcmc_prop.csv' % name
-	V_STATES = '%s_mcmc_states.csv' % name
+#	V_TDIST = '%s_mcmc_target.csv' % name
+#	V_PDIST = '%s_mcmc_prop.csv' % name
+#	V_STATES = '%s_mcmc_states.csv' % name
 	print V_TDIST, V_PDIST, V_STATES
-	mcmc_v(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)
+	mcmc_ns(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)
 	
 	#MP_DIST = '%s_mp_ratios.csv' % name
 	#MP_STATES = '%s_mp_states.csv' % name

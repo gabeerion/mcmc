@@ -1,16 +1,17 @@
 #! /usr/bin/python
 
-import tt, impute, time, multiprocessing, random, sys, math
+import tt, impute, time, multiprocessing, random, sys, math, pdb
 import numpy as np
 import scratch as s
 import imp_mcmc as im
 import mifunc as mf
 from Bio import AlignIO
-from scipy.stats import norm
+from scipy.stats import norm, lognorm, beta, expon, poisson
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
+from scipy.misc import comb
 
 CCLASS_REPS = 300000
-STEPS = 100
+STEPS = 10000
 IMPS = 100
 BOOTREPS = 100
 THRESHOLD = 0.1
@@ -20,7 +21,7 @@ OUT_STATES = 'mcmc_states_clust.csv'
 ALIGNFILE = 'bwg_del.csv'
 RDIST = 'bwgtt.csv'
 ORDERFUNC = np.min
-IMPFUNC = impute.impute_shrink
+IMPFUNC = impute.impute
 LC_DIST = 'mcmc_ratios_clust.csv'
 LC_STATES = 'mcmc_states_clust.csv'
 MP_DIST = 'mcmc_ratios_mp.csv'
@@ -31,7 +32,7 @@ RAND_OUT = 'randout.csv'
 V_TDIST = 'ns_target_v.csv'
 V_PDIST = 'ns_prop_v.csv'
 V_STATES = 'ns_states_vc.csv'
-V_TBOOT = 10
+V_TBOOT = 100
 MMEAN = 0.01
 MSTD = 0.001
 PLIK_REPS = 8
@@ -114,7 +115,7 @@ def clik2((al,origclust,dellen)):
 
 def cbootlik((al, dellen)):
 	return clust(al[np.random.choice(xrange(al.shape[0]),dellen,replace=0)])
-P = multiprocessing.Pool(processes=multiprocessing.cpu_count())
+#P = multiprocessing.Pool(processes=multiprocessing.cpu_count())
 def mlik((al,origclust,dellen)):
 	allen = al.shape[0]
 	dat = ((al,dellen) for i in xrange(BOOTREPS))
@@ -557,9 +558,16 @@ def mcmc_v(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 def alp(old, mutprobs, changes):
 	nucs = np.arange(5,dtype=np.int)
 	ret = np.copy(old)
-	for seq, site in zip(np.random.randint(old.shape[0], size=changes),impute.wsnr(mutprobs.astype(np.float),changes)):
+#	for seq, site in zip(np.random.randint(old.shape[0], size=changes),impute.wsnr(mutprobs.astype(np.float),changes)):
+#	for seq, site in zip(np.random.randint(old.shape[0], size=changes),np.random.randint(old.shape[1], size=changes)):
+#		ret[seq,site] = nucs[(old[seq,site]+np.random.randint(1,5))%5]
+	muts = set(zip(np.random.randint(old.shape[0], size=changes),np.random.randint(old.shape[1], size=changes)))
+#	while len(muts) != changes:
+#		muts.update((np.random.randint(old.shape[0]),np.random.randint(old.shape[1])))
+	for seq, site in muts:
 		ret[seq,site] = nucs[(old[seq,site]+np.random.randint(1,5))%5]
-	return ret, old.shape[0]-np.max(impute.pssm(old), axis=0)
+#	return ret, old.shape[0]-np.max(impute.pssm(old), axis=0)
+	return ret
 
 def rboot((al,dellen,rand)):
 	np.random.seed(rand)
@@ -569,12 +577,21 @@ def rboot((al,dellen,rand)):
 		boot = al[np.random.choice(xrange(allen),dellen,replace=0)]
 		stats.append(clust(boot))
 	return (np.mean(stats), np.var(stats))
+#P = multiprocessing.Pool(multiprocessing.cpu_count())
 def vplik(old, imps, cclass):
-	p = multiprocessing.Pool(multiprocessing.cpu_count())
+#	p = multiprocessing.Pool(multiprocessing.cpu_count())
 	preimage = [(old,imps,random.randint(0,1000000)) for i in xrange(PLIK_REPS)]
-	print preimage
-	image = np.array(p.map(rboot,preimage))
-	return norm(*norm.fit(image[:,0]))
+#	print preimage
+	image = np.array(P.map(rboot,preimage))
+	return beta(*beta.fit(image[:,0]))
+def sboot((al,dellen,seed)):
+    np.random.seed(seed); b = al[np.random.choice(xrange(al.shape[0]),dellen,replace=0)]
+    return clust(b)
+P = multiprocessing.Pool(multiprocessing.cpu_count())
+def pboot(al,dellen):
+    preimage = [(al,dellen,np.random.randint(1000000)) for i in xrange(BOOTREPS)]
+    im = P.map(sboot,preimage)
+    return (np.mean(im), np.var(im))
 
 
 
@@ -592,13 +609,19 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 
 	print 'Starting MCMC:'
 	print 'Step#\tOld Clust\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
+	print clust(al)
 	old = IMPFUNC(al,imps, orderfunc=ORDERFUNC)
-	old_cclass = vboot((old,allen))[0]
+	print clust(old)
+	old_cclass = pboot(old,allen)[0]
 	old_tlik = tdist.pdf(old_cclass)
-	old_pdist = vplik(old, imps, cclass)
+#	old_pdist = vplik(old, allen, cclass)
+	old_pdist = norm(old_cclass,0.02)
 	old_clust = clust(old)
 
 	states = [(old_clust,old_cclass,old_tlik,old_clust,old_cclass,old_tlik,1.0)]
+
+	print old.shape
+	print states
 
 #	Q, procs, data = multiprocessing.Queue(maxsize=MQS), [], []
 #	numprocs = multiprocessing.cpu_count()-1
@@ -613,18 +636,26 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 #		a = (prop_lik/old_lik)*(old_plik/prop_plik)
 	changes = norm(MMEAN*seqlen, MSTD*seqlen)
 	mutprobs = (allen-np.max(impute.pssm(old), axis=0)).astype(np.float)
+#	sizes = expon(0,1./663.65)
+	mu = (allen*(allen-1)/2.)*np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int(THRESHOLD*seqlen))])
+	psize = poisson(mu)
 	for i in xrange(STEPS):
-		prop, mutprobs = alp(old, mutprobs, int(changes.rvs()))
+#		prop, mutprobs = alp(old, mutprobs, int(changes.rvs()))
+		prop = alp(old, mutprobs, int(changes.rvs()))
 		prop_clust = clust(prop)
-		prop_cclass = vboot((prop,imps))[0]
-		prop_pdist = vplik(old, imps, prop_cclass)
+		prop_cclass = pboot(prop,allen)[0]
+#		prop_pdist = vplik(old, allen, prop_cclass)
+		prop_pdist = norm(prop_cclass, 0.02)
 		prop_tlik = tdist.pdf(prop_cclass)
-		a = prop_tlik/old_tlik * old_pdist.pdf(prop_cclass)/prop_pdist.pdf(old_cclass)
+		a = prop_tlik/old_tlik * math.exp(psize.logpmf(int(old_cclass*allen))-psize.logpmf(int(prop_cclass*allen)))
+#		pdb.set_trace()
+#		a = prop_tlik/old_tlik
 		states.append((prop_clust,prop_cclass,prop_tlik,old_clust,old_cclass,old_tlik,a))
-		print (i+1,old_clust,prop_clust,prop_tlik,old_tlik,a)
+#		print (i+1,old_clust,prop_clust,prop_tlik,old_tlik,a)
 		print '%d\t|%2f\t|%2f\t|%2f\t|%2f\t|%e' % (i+1,old_clust,prop_clust,prop_tlik,old_tlik,a)
 		if random.random()<a:
-			old, old_cclass, old_tlik, old_pdist, old_clust = prop, prop_cclass, prop_tlik, prop_pdist, prop_clust
+#			old, old_cclass, old_tlik, old_pdist, old_clust = prop, prop_cclass, prop_tlik, prop_pdist, prop_clust
+			old, old_cclass, old_tlik, old_clust = prop, prop_cclass, prop_tlik, prop_clust
 #		states.append((prop_clust,prop_cclass,prop_tlik,prop_plik,old_clust,old_cclass,old_tlik,old_plik,a))
 	np.savetxt(V_STATES, np.array(states), delimiter=',')
 

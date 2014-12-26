@@ -10,15 +10,15 @@ from scipy.stats import norm, lognorm, beta, expon, poisson
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 from scipy.misc import comb
 
-CCLASS_REPS = 300000
+CCLASS_REPS = 30000
 STEPS = 10000
-IMPS = 100
+IMPS = 5
 BOOTREPS = 100
-THRESHOLD = 0.1
+THRESHOLD = 0.25
 MQS = 1000
 OUT_RATIOS = 'mcmc_ratios_mp.csv'
 OUT_STATES = 'mcmc_states_clust.csv'
-ALIGNFILE = 'bwg_del.csv'
+ALIGNFILE = 'bwtsub.csv'
 RDIST = 'bwgtt.csv'
 ORDERFUNC = np.min
 IMPFUNC = impute.impute
@@ -29,9 +29,9 @@ MP_STATES = 'mcmc_states_mp.csv'
 TTMP_DIST = 'mcmc_ratios_ttmp.csv'
 TTMP_STATES = 'mcmc_states_ttmp.csv'
 RAND_OUT = 'randout.csv'
-V_TDIST = 'ns_target_v.csv'
-V_PDIST = 'ns_prop_v.csv'
-V_STATES = 'ns_states_vc.csv'
+V_TDIST = 'tsub_target_v.csv'
+V_PDIST = 'tsub_prop_v.csv'
+V_STATES = 'tsub_states_vc.csv'
 V_TBOOT = 100
 MMEAN = 0.01
 MSTD = 0.001
@@ -592,11 +592,19 @@ def pboot(al,dellen):
     preimage = [(al,dellen,np.random.randint(1000000)) for i in xrange(BOOTREPS)]
     im = P.map(sboot,preimage)
     return (np.mean(im), np.var(im))
-
+def csize(allen,seqlen,clusts):
+	mu = (allen*(allen-1)/2.)*(1-np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int(THRESHOLD*seqlen))]))
+def wdist():
+	pdn = np.zeros(allen,allen,dtype=np.int)
+def subsize(big, sub, csub, csize):
+	def p(big,sub,cbig,csub):
+		return binom(cbig,csub)*binom(big-cbig,sub-csub)/binom(big,sub)
+	return np.sum((p(big,sub,i,csub)*csize.pdf(i) for i in xrange(csub,big+1)))
 
 
 def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
 	allen = al.shape[0]
+	implen = allen+imps
 	seqlen = al.shape[1]
 	delclust = clust(al)
 
@@ -607,6 +615,16 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 		print 'Existing distribution not found, building...'
 		tdist = norm(delclust, tclass_v(al))
 
+	# Estimate distributions of the size of clustering classes for subsamples (0) and full data (1)
+	mu0 = (allen*(allen-1)/2.)*(1-np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int(THRESHOLD*seqlen))]))
+	psize0 = poisson(mu0)
+
+	mu1 = (implen*(implen-1)/2.)*(1-np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int(THRESHOLD*seqlen))]))
+	psize1 = poisson(mu1)
+
+	# Estimate sizes of actual subsampling congruence classes
+#	csizes = np.sum([wdist(psize1,) for i in xrange(allen**2)])
+
 	print 'Starting MCMC:'
 	print 'Step#\tOld Clust\t|New Lik\t|New PropLik\t|Old Lik\t|Old PropLik\t|Accept Prob'
 	print clust(al)
@@ -614,49 +632,32 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 	print clust(old)
 	old_cclass = pboot(old,allen)[0]
 	old_tlik = tdist.pdf(old_cclass)
-#	old_pdist = vplik(old, allen, cclass)
 	old_pdist = norm(old_cclass,0.02)
 	old_clust = clust(old)
+	old_size = subsize(implen,allen,math.float(old_cclass*allen),psize1)
 
 	states = [(old_clust,old_cclass,old_tlik,old_clust,old_cclass,old_tlik,1.0)]
 
 	print old.shape
 	print states
 
-#	Q, procs, data = multiprocessing.Queue(maxsize=MQS), [], []
-#	numprocs = multiprocessing.cpu_count()-1
-#	reps = -(-STEPS/numprocs)
-#	for i in xrange(numprocs):
-#		p = multiprocessing.Process(target=gsv, args=(al,imps,reps,Q,random.randint(0,numprocs**2)))
-#		procs.append(p)
-#		p.start()
-#	for i in xrange(reps*numprocs):
-#		prop, prop_cclass, prop_clust = Q.get()
-#		prop_lik, prop_plik = tdist.pdf(prop_cclass), pdist.pdf(prop_cclass)
-#		a = (prop_lik/old_lik)*(old_plik/prop_plik)
+
 	changes = norm(MMEAN*seqlen, MSTD*seqlen)
 	mutprobs = (allen-np.max(impute.pssm(old), axis=0)).astype(np.float)
-#	sizes = expon(0,1./663.65)
-	mu = (allen*(allen-1)/2.)*np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int(THRESHOLD*seqlen))])
-	psize = poisson(mu)
+
 	for i in xrange(STEPS):
-#		prop, mutprobs = alp(old, mutprobs, int(changes.rvs()))
 		prop = alp(old, mutprobs, int(changes.rvs()))
 		prop_clust = clust(prop)
 		prop_cclass = pboot(prop,allen)[0]
-#		prop_pdist = vplik(old, allen, prop_cclass)
 		prop_pdist = norm(prop_cclass, 0.02)
 		prop_tlik = tdist.pdf(prop_cclass)
-		a = prop_tlik/old_tlik * math.exp(psize.logpmf(int(old_cclass*allen))-psize.logpmf(int(prop_cclass*allen)))
-#		pdb.set_trace()
-#		a = prop_tlik/old_tlik
+		prop_size = subsize(implen,allen,math.float(prop_cclass*allen),psize1)
+#		a = prop_tlik/old_tlik * math.exp(psize.logpmf(int(old_cclass*allen))-psize.logpmf(int(prop_cclass*allen)))
+		a = prop_tlik/old_tlik * old_size/prop_size
 		states.append((prop_clust,prop_cclass,prop_tlik,old_clust,old_cclass,old_tlik,a))
-#		print (i+1,old_clust,prop_clust,prop_tlik,old_tlik,a)
 		print '%d\t|%2f\t|%2f\t|%2f\t|%2f\t|%e' % (i+1,old_clust,prop_clust,prop_tlik,old_tlik,a)
 		if random.random()<a:
-#			old, old_cclass, old_tlik, old_pdist, old_clust = prop, prop_cclass, prop_tlik, prop_pdist, prop_clust
-			old, old_cclass, old_tlik, old_clust = prop, prop_cclass, prop_tlik, prop_clust
-#		states.append((prop_clust,prop_cclass,prop_tlik,prop_plik,old_clust,old_cclass,old_tlik,old_plik,a))
+			old, old_cclass, old_tlik, old_clust, old_size = prop, prop_cclass, prop_tlik, prop_clust, prop_size
 	np.savetxt(V_STATES, np.array(states), delimiter=',')
 
 

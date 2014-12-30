@@ -6,15 +6,15 @@ import scratch as s
 import imp_mcmc as im
 import mifunc as mf
 from Bio import AlignIO
-from scipy.stats import norm, lognorm, beta, expon, poisson
+from scipy.stats import norm, lognorm, beta, expon, poisson, binom
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 from scipy.misc import comb, logsumexp
 
 CCLASS_REPS = 30000
 STEPS = 10000
-IMPS = 5
+IMPS = 100
 BOOTREPS = 100
-THRESHOLD = 0.25
+THRESHOLD = 0.1
 MQS = 1000
 OUT_RATIOS = 'mcmc_ratios_mp.csv'
 OUT_STATES = 'mcmc_states_clust.csv'
@@ -29,9 +29,9 @@ MP_STATES = 'mcmc_states_mp.csv'
 TTMP_DIST = 'mcmc_ratios_ttmp.csv'
 TTMP_STATES = 'mcmc_states_ttmp.csv'
 RAND_OUT = 'randout.csv'
-V_TDIST = 'tsub_target_v.csv'
-V_PDIST = 'tsub_prop_v.csv'
-V_STATES = 'tsub_states_vc.csv'
+V_TDIST = 'hsub_target_v.csv'
+V_PDIST = 'hsub_prop_v.csv'
+V_STATES = 'hsub_states_vc.csv'
 V_TBOOT = 100
 MMEAN = 0.01
 MSTD = 0.001
@@ -569,6 +569,28 @@ def alp(old, mutprobs, changes):
 #	return ret, old.shape[0]-np.max(impute.pssm(old), axis=0)
 	return ret
 
+def alp_prob(old, mutprobs, changes, pssm):
+#	print mutprobs, mutprobs.shape
+#	print pssm, pssm.shape
+	nucs = np.arange(5,dtype=np.int)
+	ret = np.copy(old)
+#	muts = set(zip(np.random.randint(old.shape[0], size=changes),impute.wsnr(mutprobs,changes)))
+	muts = set([(np.random.randint(old.shape[0]),impute.weightselect(mutprobs,random.random())) for i in xrange(changes)])
+#	print changes, np.sum(mutprobs>0)
+	while len(muts) != changes:
+		add = (np.random.randint(old.shape[0]),impute.weightselect(mutprobs,random.random()))
+#		print add, len(muts)
+		muts.update([add])
+	forward_loglik = 0.
+	reverse_loglik = 0.
+	rands = np.random.random(size=len(muts))
+	for i, (seq, site) in enumerate(muts):
+		ret[seq,site] = impute.weightselect(pssm[:,site],rands[i])
+#		print ret[seq,site]
+		forward_loglik += math.log(mutprobs[site]*pssm[ret[seq,site]][site])
+		reverse_loglik += math.log(mutprobs[site]*pssm[old[seq,site]][site])
+	return ret, forward_loglik, reverse_loglik
+
 def rboot((al,dellen,rand)):
 	np.random.seed(rand)
 	allen = al.shape[0]
@@ -585,7 +607,8 @@ def vplik(old, imps, cclass):
 	image = np.array(P.map(rboot,preimage))
 	return beta(*beta.fit(image[:,0]))
 def sboot((al,dellen,seed)):
-    np.random.seed(seed); b = al[np.random.choice(xrange(al.shape[0]),dellen,replace=0)]
+    np.random.seed(seed)
+    b = al[np.random.choice(xrange(al.shape[0]),dellen,replace=0)]
     return clust(b)
 P = multiprocessing.Pool(multiprocessing.cpu_count())
 def pboot(al,dellen):
@@ -593,7 +616,7 @@ def pboot(al,dellen):
     im = P.map(sboot,preimage)
     return (np.mean(im), np.var(im))
 def csize(allen,seqlen,clusts):
-	mu = (allen*(allen-1)/2.)*(1-np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int(THRESHOLD*seqlen))]))
+	mu = (allen*(allen-1)/2.)*(1-np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int((1-THRESHOLD)*seqlen))]))
 def wdist():
 	pdn = np.zeros(allen,allen,dtype=np.int)
 def subsize(big, sub, csub, csize):
@@ -618,21 +641,17 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 		tdist = norm(delclust, tclass_v(al))
 
 	# Estimate distributions of the size of clustering classes for subsamples (0) and full data (1)
-	mu0 = (allen*(allen-1)/2.)*(1-np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int(THRESHOLD*seqlen))]))
+	pclust = 1-binom(seqlen,.2).cdf((1-THRESHOLD)*seqlen)
+	mu0 = (allen*(allen-1)/2.)*pclust
 	print mu0
 	psize0 = poisson(mu0)
-	print psize0
 
-	mu1 = (implen*(implen-1)/2.)*(1-np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int(THRESHOLD*seqlen))]))
-	psize1 = poisson(mu1)
+	mu1 = (implen*(implen-1)/2.)*pclust
 	print mu1
-	print psize1
+	psize1 = poisson(mu1)
 
 	# Estimate sizes of actual subsampling congruence classes
 #	csizes = np.sum([wdist(psize1,) for i in xrange(allen**2)])
-
-	print 'Starting MCMC:'
-	print 'Step#\tOld Clust\tProp Clust\t|New Lik\t|New Size\t|Old Lik\t|Old Size\t|Accept Prob'
 	print clust(al)
 	old = IMPFUNC(al,imps, orderfunc=ORDERFUNC)
 	print clust(old)
@@ -642,26 +661,34 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 	old_clust = clust(old)
 	old_size = subsize(implen,allen,int(round(old_cclass*allen)),psize1)
 
-	states = [(old_clust,old_cclass,old_tlik,old_clust,old_cclass,old_tlik,1.0)]
+#	states = [(old_clust,old_cclass,old_tlik,old_clust,old_cclass,old_tlik,1.0)]
+	states = [(0,old_clust,old_cclass,old_tlik,old_size,old_clust,old_cclass,old_tlik,old_size,1.0)]
 
 	print old.shape
 	print states
 
 
+
+	print 'Starting MCMC:'
+	print 'Step#\tOld Clust\tProp Clust\tOld CClass\tProp CClass\tOld Lik\t\tProp Lik\tOld Size\tProp Size\t\tAccept Prob'
 	changes = norm(MMEAN*seqlen, MSTD*seqlen)
-	mutprobs = (allen-np.max(impute.pssm(old), axis=0)).astype(np.float)
+	pssm = impute.pssm(al).astype(float)/allen
+	mutprobs = (1.-np.max(pssm, axis=0)).astype(np.float)
+	mutprobs /= np.sum(mutprobs)
+	print mutprobs
 
 	for i in xrange(STEPS):
-		prop = alp(old, mutprobs, int(changes.rvs()))
+		prop, for_llk, rev_llk = alp_prob(old, mutprobs, int(changes.rvs()), pssm)
 		prop_clust = clust(prop)
 		prop_cclass = pboot(prop,allen)[0]
 		prop_pdist = norm(prop_cclass, 0.02)
 		prop_tlik = tdist.logpdf(prop_cclass)
 		prop_size = subsize(implen,allen,int(round(prop_cclass*allen)),psize1)
 #		a = prop_tlik/old_tlik * math.exp(psize.logpmf(int(old_cclass*allen))-psize.logpmf(int(prop_cclass*allen)))
-		a = math.exp(prop_tlik-old_tlik + old_size-prop_size)
-		states.append((prop_clust,prop_cclass,prop_tlik,old_clust,old_cclass,old_tlik,a))
-		print '%d\t|%2f\t|%2f\t|%2f\t|%2f\t|%2f\t|%2f\t|%e' % (i+1,old_clust,prop_clust,prop_tlik,prop_size,old_tlik,old_size,a)
+		a = math.exp(prop_tlik-old_tlik + old_size-prop_size+rev_llk-for_llk)
+		states.append((i+1,old_clust,old_cclass,old_tlik,old_size,prop_clust,prop_cclass,prop_tlik,prop_size,a))
+	#	states.append((prop_clust,prop_cclass,prop_tlik,old_clust,old_cclass,old_tlik,a))
+		print '%d\t%2f\t%2f\t%2f\t%2f\t%2f\t%2f\t%2f\t%2f\t%e' % (i+1,old_clust,prop_clust,old_cclass,prop_cclass,old_tlik, prop_tlik, old_size, prop_size, a)
 		if random.random()<a:
 			old, old_cclass, old_tlik, old_clust, old_size = prop, prop_cclass, prop_tlik, prop_clust, prop_size
 	np.savetxt(V_STATES, np.array(states), delimiter=',')

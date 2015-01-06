@@ -6,13 +6,14 @@ import scratch as s
 import imp_mcmc as im
 import mifunc as mf
 from Bio import AlignIO
+from collections import defaultdict
 from scipy.stats import norm, lognorm, beta, expon, poisson, binom
 from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 from scipy.misc import comb, logsumexp
 
 CCLASS_REPS = 30000
-STEPS = 10000
-IMPS = 100
+STEPS = 50000
+IMPS = 5
 BOOTREPS = 100
 THRESHOLD = 0.1
 MQS = 1000
@@ -29,9 +30,9 @@ MP_STATES = 'mcmc_states_mp.csv'
 TTMP_DIST = 'mcmc_ratios_ttmp.csv'
 TTMP_STATES = 'mcmc_states_ttmp.csv'
 RAND_OUT = 'randout.csv'
-V_TDIST = 'hsub_target_v.csv'
-V_PDIST = 'hsub_prop_v.csv'
-V_STATES = 'hsub_states_vc.csv'
+V_TDIST = 'rsub_target_v.csv'
+V_PDIST = 'rsub_prop_v.csv'
+V_STATES = 'rsub_states_vc.csv'
 V_TBOOT = 100
 MMEAN = 0.01
 MSTD = 0.001
@@ -43,6 +44,12 @@ def clust(arr):
 	p[np.diag_indices(p.shape[0])] = sys.maxint
 	mins = np.min(p, axis=0)
 	return float(np.sum(mins<(THRESHOLD*arr.shape[1])))/p.shape[0]
+
+def pdclust(pd, seqlen):
+	p = np.copy(pd)
+	p[np.diag_indices(p.shape[0])] = seqlen
+	mins = np.min(p, axis=0)
+	return float(np.sum(mins<(THRESHOLD*seqlen)))/p.shape[0]
 
 def distmins(al):
 	p = impute.pdn(al)
@@ -569,6 +576,20 @@ def alp(old, mutprobs, changes):
 #	return ret, old.shape[0]-np.max(impute.pssm(old), axis=0)
 	return ret
 
+def alp_trick(old, mutprobs, changes, pssm):
+	nucs = np.arange(5,dtype=np.int)
+	ret = np.copy(old)
+#	for seq, site in zip(np.random.randint(old.shape[0], size=changes),impute.wsnr(mutprobs.astype(np.float),changes)):
+#	for seq, site in zip(np.random.randint(old.shape[0], size=changes),np.random.randint(old.shape[1], size=changes)):
+#		ret[seq,site] = nucs[(old[seq,site]+np.random.randint(1,5))%5]
+	muts = set(zip(np.random.randint(old.shape[0], size=changes),np.random.randint(old.shape[1], size=changes)))
+#	while len(muts) != changes:
+#		muts.update((np.random.randint(old.shape[0]),np.random.randint(old.shape[1])))
+	for seq, site in muts:
+		ret[seq,site] = nucs[(old[seq,site]+np.random.randint(1,5))%5]
+#	return ret, old.shape[0]-np.max(impute.pssm(old), axis=0)
+	return ret, 0, 0
+
 def alp_prob(old, mutprobs, changes, pssm):
 #	print mutprobs, mutprobs.shape
 #	print pssm, pssm.shape
@@ -576,7 +597,7 @@ def alp_prob(old, mutprobs, changes, pssm):
 	ret = np.copy(old)
 #	muts = set(zip(np.random.randint(old.shape[0], size=changes),impute.wsnr(mutprobs,changes)))
 	muts = set([(np.random.randint(old.shape[0]),impute.weightselect(mutprobs,random.random())) for i in xrange(changes)])
-#	print changes, np.sum(mutprobs>0)
+#		print changes, np.sum(mutprobs>0)
 	while len(muts) != changes:
 		add = (np.random.randint(old.shape[0]),impute.weightselect(mutprobs,random.random()))
 #		print add, len(muts)
@@ -610,11 +631,25 @@ def sboot((al,dellen,seed)):
     np.random.seed(seed)
     b = al[np.random.choice(xrange(al.shape[0]),dellen,replace=0)]
     return clust(b)
-P = multiprocessing.Pool(multiprocessing.cpu_count())
+#P = multiprocessing.Pool(multiprocessing.cpu_count())
 def pboot(al,dellen):
     preimage = [(al,dellen,np.random.randint(1000000)) for i in xrange(BOOTREPS)]
     im = P.map(sboot,preimage)
     return (np.mean(im), np.var(im))
+def boot_pd(pd,dellen,seqlen):
+	subclusts = []
+	for i in xrange(BOOTREPS):
+		inds = np.random.choice(xrange(pd.shape[0]),dellen,replace=0)
+		subclusts.append(pdclust(pd[inds][:,inds], seqlen))
+	return (np.mean(subclusts),np.var(subclusts))
+def exact_boot(pd,dellen,seqlen):
+	binary = pd < (THRESHOLD*seqlen)
+	binary[np.diag_indices(binary.shape[0])]=0
+	pchoice = float(dellen)/pd.shape[0]
+#	print pchoice
+	indicators = [pchoice*(1-(1-pchoice)**np.sum(r)) for r in binary]
+#	print indicators
+	return np.sum(indicators)/dellen
 def csize(allen,seqlen,clusts):
 	mu = (allen*(allen-1)/2.)*(1-np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int((1-THRESHOLD)*seqlen))]))
 def wdist():
@@ -625,6 +660,13 @@ def subsize(big, sub, csub, csize):
 		if x== 0: return float('-inf')
 		else: return math.log(x)
 	return logsumexp([logp(big,sub,i,csub)+csize.logpmf(i) for i in xrange(csub,big+1)])
+def class_sizes(big,sub,csize):
+	d = defaultdict(lambda: float('-inf'))
+	for c in xrange(big+1):
+		pchoice = float(sub)/big
+		cclass = c*pchoice*1./big
+		d[cclass] = csize.logpmf(c)
+	return d
 
 
 def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
@@ -650,16 +692,23 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 	print mu1
 	psize1 = poisson(mu1)
 
+#	cclass_sizes = class_sizes(implen,allen,psize1)
+#	for i in xrange(allen+1):
+#		print 'cclass %d: %2f ' % (i,cclass_sizes[i])
+
 	# Estimate sizes of actual subsampling congruence classes
 #	csizes = np.sum([wdist(psize1,) for i in xrange(allen**2)])
 	print clust(al)
 	old = IMPFUNC(al,imps, orderfunc=ORDERFUNC)
 	print clust(old)
-	old_cclass = pboot(old,allen)[0]
+	old_pd = impute.pdn(old)
+	old_cclass = exact_boot(old_pd, allen, seqlen)
+#	old_cclass = pboot(old,allen)[0]
 	old_tlik = tdist.logpdf(old_cclass)
 	old_pdist = norm(old_cclass,0.02)
 	old_clust = clust(old)
 	old_size = subsize(implen,allen,int(round(old_cclass*allen)),psize1)
+#	old_size = cclass_sizes[old_cclass]
 
 #	states = [(old_clust,old_cclass,old_tlik,old_clust,old_cclass,old_tlik,1.0)]
 	states = [(0,old_clust,old_cclass,old_tlik,old_size,old_clust,old_cclass,old_tlik,old_size,1.0)]
@@ -680,10 +729,13 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 	for i in xrange(STEPS):
 		prop, for_llk, rev_llk = alp_prob(old, mutprobs, int(changes.rvs()), pssm)
 		prop_clust = clust(prop)
+		prop_pd = impute.pdn(prop)
+#		prop_cclass = exact_boot(prop_pd, allen, seqlen)
 		prop_cclass = pboot(prop,allen)[0]
 		prop_pdist = norm(prop_cclass, 0.02)
 		prop_tlik = tdist.logpdf(prop_cclass)
-		prop_size = subsize(implen,allen,int(round(prop_cclass*allen)),psize1)
+#		prop_size = subsize(implen,allen,int(round(prop_cclass*allen)),psize1)
+		prop_size = cclass_sizes[prop_cclass]
 #		a = prop_tlik/old_tlik * math.exp(psize.logpmf(int(old_cclass*allen))-psize.logpmf(int(prop_cclass*allen)))
 		a = math.exp(prop_tlik-old_tlik + old_size-prop_size+rev_llk-for_llk)
 		states.append((i+1,old_clust,old_cclass,old_tlik,old_size,prop_clust,prop_cclass,prop_tlik,prop_size,a))
@@ -692,6 +744,7 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 		if random.random()<a:
 			old, old_cclass, old_tlik, old_clust, old_size = prop, prop_cclass, prop_tlik, prop_clust, prop_size
 	np.savetxt(V_STATES, np.array(states), delimiter=',')
+	return np.array(states), tdist
 
 
 

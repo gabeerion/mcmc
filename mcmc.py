@@ -1,5 +1,5 @@
 #! /usr/bin/python
-
+# check
 import tt, impute, time, multiprocessing, random, sys, math, pdb
 import numpy as np
 import scratch as s

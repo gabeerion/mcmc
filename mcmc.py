@@ -12,14 +12,14 @@ from scipy.stats import ks_2samp as ks, gaussian_kde as gk
 from scipy.misc import comb, logsumexp
 
 CCLASS_REPS = 30000
-STEPS = 50000
+STEPS = 1000000
 IMPS = 5
 BOOTREPS = 100
 THRESHOLD = 0.1
 MQS = 1000
 OUT_RATIOS = 'mcmc_ratios_mp.csv'
 OUT_STATES = 'mcmc_states_clust.csv'
-ALIGNFILE = 'bwtsub.csv'
+ALIGNFILE = 'tinysub.csv'
 RDIST = 'bwgtt.csv'
 ORDERFUNC = np.min
 IMPFUNC = impute.impute
@@ -698,7 +698,7 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 
 	# Estimate sizes of actual subsampling congruence classes
 #	csizes = np.sum([wdist(psize1,) for i in xrange(allen**2)])
-	print clust(al)
+	print delclust
 	old = IMPFUNC(al,imps, orderfunc=ORDERFUNC)
 	print clust(old)
 	old_pd = impute.pdn(old)
@@ -731,11 +731,11 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 		prop_clust = clust(prop)
 		prop_pd = impute.pdn(prop)
 #		prop_cclass = exact_boot(prop_pd, allen, seqlen)
-		prop_cclass = pboot(prop,allen)[0]
+		prop_cclass = exact_boot(prop_pd,allen,seqlen)
 		prop_pdist = norm(prop_cclass, 0.02)
 		prop_tlik = tdist.logpdf(prop_cclass)
 #		prop_size = subsize(implen,allen,int(round(prop_cclass*allen)),psize1)
-		prop_size = cclass_sizes[prop_cclass]
+		prop_size = subsize(implen,allen,int(round(prop_cclass*allen)),psize1)
 #		a = prop_tlik/old_tlik * math.exp(psize.logpmf(int(old_cclass*allen))-psize.logpmf(int(prop_cclass*allen)))
 		a = math.exp(prop_tlik-old_tlik + old_size-prop_size+rev_llk-for_llk)
 		states.append((i+1,old_clust,old_cclass,old_tlik,old_size,prop_clust,prop_cclass,prop_tlik,prop_size,a))

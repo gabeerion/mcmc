@@ -30,9 +30,9 @@ MP_STATES = 'mcmc_states_mp.csv'
 TTMP_DIST = 'mcmc_ratios_ttmp.csv'
 TTMP_STATES = 'mcmc_states_ttmp.csv'
 RAND_OUT = 'randout.csv'
-V_TDIST = 'rsub_target_v.csv'
-V_PDIST = 'rsub_prop_v.csv'
-V_STATES = 'rsub_states_vc.csv'
+V_TDIST = 'pd_target_v.csv'
+V_PDIST = 'pd_prop_v.csv'
+V_STATES = 'pd_states_vc.csv'
 V_TBOOT = 100
 MMEAN = 0.01
 MSTD = 0.001
@@ -642,6 +642,12 @@ def boot_pd(pd,dellen,seqlen):
 		inds = np.random.choice(xrange(pd.shape[0]),dellen,replace=0)
 		subclusts.append(pdclust(pd[inds][:,inds], seqlen))
 	return (np.mean(subclusts),np.var(subclusts))
+def boot_dist(pd,dellen,seqlen):
+	subclusts = []
+	for i in xrange(BOOTREPS):
+		inds = np.random.choice(xrange(pd.shape[0]),dellen,replace=0)
+		subclusts.append(pdclust(pd[inds][:,inds], seqlen))
+	return np.array(subclusts)
 def exact_boot(pd,dellen,seqlen):
 	binary = pd < (THRESHOLD*seqlen)
 	binary[np.diag_indices(binary.shape[0])]=0
@@ -650,6 +656,19 @@ def exact_boot(pd,dellen,seqlen):
 	indicators = [pchoice*(1-(1-pchoice)**np.sum(r)) for r in binary]
 #	print indicators
 	return np.sum(indicators)/dellen
+def subdist(pd,dellen,seqlen):
+	binary = pd < (THRESHOLD*seqlen)
+	binary[np.diag_indices(binary.shape[0])]=0
+	pchoice = float(dellen)/pd.shape[0]
+	indicators = [pchoice*(1-(1-pchoice)**np.sum(r)) for r in binary]
+	rawvars = [p*(1-p) for p in indicators]
+
+	nmean = np.sum(indicators)
+	nvar = np.sum(rawvars)
+	dist = norm(nmean,np.sqrt(nvar))
+	return dist
+#	return lambda x: dist.pdf(x*dellen)
+
 def csize(allen,seqlen,clusts):
 	mu = (allen*(allen-1)/2.)*(1-np.sum([comb(seqlen,i)*(.2**i)*(.8**(seqlen-i)) for i in xrange(int((1-THRESHOLD)*seqlen))]))
 def wdist():
@@ -746,6 +765,91 @@ def mcmc_ns(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS)
 	np.savetxt(V_STATES, np.array(states), delimiter=',')
 	return np.array(states), tdist
 
+def pdsize(pd, seqlen, num_bases=5):
+	p = 1-1./num_bases
+	pmut = binom(seqlen, p)
+	distances = pd[np.triu_indices(pd.shape[0],k=1)]
+	return np.sum(pmut.logpmf(distances))
+
+
+def mcmc_pd_sizes(al=np.genfromtxt(ALIGNFILE,delimiter=',').astype(np.int), imps=IMPS):
+	allen = al.shape[0]
+	implen = allen+imps
+	seqlen = al.shape[1]
+	delclust = clust(al)
+
+	print 'Calculating target distribution...'
+	try:
+		tdist = norm(delclust, np.std(np.genfromtxt(V_TDIST, delimiter=',')))
+	except IOError:
+		print 'Existing distribution not found, building...'
+		tdist = norm(delclust, tclass_v(al))
+
+	# Estimate distributions of the size of clustering classes for subsamples (0) and full data (1)
+	pclust = 1-binom(seqlen,.2).cdf((1-THRESHOLD)*seqlen)
+	mu0 = (allen*(allen-1)/2.)*pclust
+	print mu0
+	psize0 = poisson(mu0)
+
+	mu1 = (implen*(implen-1)/2.)*pclust
+	print mu1
+	psize1 = poisson(mu1)
+
+#	cclass_sizes = class_sizes(implen,allen,psize1)
+#	for i in xrange(allen+1):
+#		print 'cclass %d: %2f ' % (i,cclass_sizes[i])
+
+	# Estimate sizes of actual subsampling congruence classes
+#	csizes = np.sum([wdist(psize1,) for i in xrange(allen**2)])
+	print delclust
+	old = IMPFUNC(al,imps, orderfunc=ORDERFUNC)
+	print clust(old)
+	old_pd = impute.pdn(old)
+	old_cclass = exact_boot(old_pd, allen, seqlen)
+#	old_cclass = pboot(old,allen)[0]
+	old_tlik = tdist.logpdf(old_cclass)
+	old_pdist = norm(old_cclass,0.02)
+	old_clust = clust(old)
+#	old_size = subsize(implen,allen,int(round(old_cclass*allen)),psize1)
+	old_size = pdsize(old_pd, seqlen)
+#	old_size = cclass_sizes[old_cclass]
+
+#	states = [(old_clust,old_cclass,old_tlik,old_clust,old_cclass,old_tlik,1.0)]
+	states = [(0,old_clust,old_cclass,old_tlik,old_size,old_clust,old_cclass,old_tlik,old_size,1.0)]
+
+	print old.shape
+	print states
+
+
+
+	print 'Starting MCMC:'
+	print 'Step#\tOld Clust\tProp Clust\tOld CClass\tProp CClass\tOld Lik\t\tProp Lik\tOld Size\tProp Size\t\tAccept Prob'
+	changes = norm(MMEAN*seqlen, MSTD*seqlen)
+	pssm = impute.pssm(al).astype(float)/allen
+	mutprobs = (1.-np.max(pssm, axis=0)).astype(np.float)
+	mutprobs /= np.sum(mutprobs)
+	print mutprobs
+
+	for i in xrange(STEPS):
+		prop, for_llk, rev_llk = alp_prob(old, mutprobs, int(changes.rvs()), pssm)
+		prop_clust = clust(prop)
+		prop_pd = impute.pdn(prop)
+#		prop_cclass = exact_boot(prop_pd, allen, seqlen)
+		prop_cclass = exact_boot(prop_pd,allen,seqlen)
+		prop_pdist = norm(prop_cclass, 0.02)
+		prop_tlik = tdist.logpdf(prop_cclass)
+#		prop_size = subsize(implen,allen,int(round(prop_cclass*allen)),psize1)
+#		prop_size = subsize(implen,allen,int(round(prop_cclass*allen)),psize1)
+		prop_size = pdsize(prop_pd, seqlen)
+#		a = prop_tlik/old_tlik * math.exp(psize.logpmf(int(old_cclass*allen))-psize.logpmf(int(prop_cclass*allen)))
+		a = math.exp(prop_tlik-old_tlik + old_size-prop_size+rev_llk-for_llk)
+		states.append((i+1,old_clust,old_cclass,old_tlik,old_size,prop_clust,prop_cclass,prop_tlik,prop_size,a))
+	#	states.append((prop_clust,prop_cclass,prop_tlik,old_clust,old_cclass,old_tlik,a))
+		print '%d\t%2f\t%2f\t%2f\t%2f\t%2f\t%2f\t%2f\t%2f\t%e' % (i+1,old_clust,prop_clust,old_cclass,prop_cclass,old_tlik, prop_tlik, old_size, prop_size, a)
+		if random.random()<a:
+			old, old_cclass, old_tlik, old_clust, old_size = prop, prop_cclass, prop_tlik, prop_clust, prop_size
+	np.savetxt(V_STATES, np.array(states), delimiter=',')
+	return np.array(states), tdist
 
 
 if __name__ == '__main__':
@@ -755,7 +859,7 @@ if __name__ == '__main__':
 #	V_PDIST = '%s_mcmc_prop.csv' % name
 #	V_STATES = '%s_mcmc_states.csv' % name
 	print V_TDIST, V_PDIST, V_STATES
-	mcmc_ns(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)
+	mcmc_pd_sizes(al=np.genfromtxt(args[0],delimiter=',').astype(np.int), imps=IMPS)
 	
 	#MP_DIST = '%s_mp_ratios.csv' % name
 	#MP_STATES = '%s_mp_states.csv' % name

@@ -18,12 +18,12 @@ from IPython.core import ultratb
 sys.excepthook = ultratb.FormattedTB(mode='Verbose',
 color_scheme='Linux', call_pdb=1)
 
-ALIGNFILE = 'm14sub.csv'
+ALIGNFILE = 'tinysub.csv'
 TFILE = 'popt_target.csv'
 CCFILE = 'popt_cc.csv'
 CLUSTFILE = 'popt_clust.csv'
 KSFILE = 'popt_ks.csv'
-IMPS = 100
+IMPS = 5
 TBOOT = 1000
 RESTARTS = 4
 SIZE = 100
